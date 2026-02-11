@@ -1,54 +1,19 @@
-# Usage2ADW for Oracle Cloud@Customer (ExaCC) - Implementation Plan
+# Usage2ADW for Oracle Cloud@Customer (ExaCC) - Complete Implementation Plan
 
 ## Context
 
-Your organization runs **Oracle Cloud@Customer (ExaCC)** with Exadata infrastructure, Autonomous Databases, APEX servers, OEM, and multiple Oracle instances. You need **cost reporting and usage reports** to gain visibility into infrastructure spending, enable department chargebacks, and track resource consumption trends.
+**Problem**: Your organization runs Oracle Cloud@Customer (ExaCC) with Exadata infrastructure, ADB, APEX servers, OEM, and Oracle instances across **2 tenancies (Prod & Dev)** in a **private domain data center**. You need cost reporting and usage visibility for budget tracking, department chargebacks, and capacity planning.
 
-This repository (**Usage2ADW** by Adi Zohar, Oracle open-source, v25.10.01) is an Oracle-provided tool that extracts OCI cost and usage reports from the OCI tenant's Object Storage and loads them into an **Autonomous Data Warehouse (ADW)** with **APEX dashboards** for visualization. It is directly applicable to your ExaCC environment since Cloud@Customer cost reports are generated the same way as public OCI - in the Oracle-managed "bling" Object Storage bucket.
+**Solution**: Deploy **Usage2ADW** (Oracle open-source, v25.10.01) to extract OCI cost/usage reports into an **Autonomous Data Warehouse (ADW-S)** in OCI Cloud with **APEX dashboards**, automated via **Ansible**, with daily email reports.
 
-> **Disclaimer**: This is NOT an official Oracle billing tool. Use OCI's built-in Cost Analysis for official utilization calculations. Usage2ADW is for trend analysis, reporting, and chargeback.
+**Architecture Decisions** (per your input):
+- **VM**: OCI Cloud VM with Instance Principals authentication
+- **Database**: OCI Cloud ADW-S (Shared) with built-in APEX
+- **Automation**: Ansible for provisioning and configuration management
+- **Tenancies**: 2 (Prod + Dev) loaded into single ADW for consolidated reporting
+- **On-Prem Servers**: RHEL 9.0+ and Windows (for accessing APEX dashboards)
 
----
-
-## What This Repository Can Do for Your Organization
-
-### 1. Out-of-the-Box Capabilities
-
-| Capability | Description | Relevant Files |
-|-----------|-------------|----------------|
-| **Cost Data Extraction** | Pulls daily cost CSVs from OCI Object Storage ("bling" bucket) containing all ExaCC service costs | `usage2adw.py` (lines 1055-1224) |
-| **ADW Data Warehouse** | Stores cost data in `OCI_COST` table with full historical retention for trend analysis | `usage2adw.py` (lines 817-910) |
-| **APEX Dashboards** | 6 built-in report types: Current State, CPU Over Time, Storage Over Time, Cost Analysis, Cost Over Time, Rate Card | `usage2adw_demo_apex_app.sql` (2.4MB) |
-| **Tag-Based Cost Allocation** | 4 "special" tag columns (`TAG_SPECIAL` through `TAG_SPECIAL4`) for department/project chargeback | `usage2adw.py` (lines 317-320, 883-905) |
-| **ExaCC Resource Inventory** | ShowOCI integration loads 88+ tables including **`OCI_SHOWOCI_DATABASE_EXA_CC_VMS`** with ExaCC VM Cluster details (OCPUs, memory, storage, GI version, maintenance windows) | `usage2adw_showoci_csv2adw.py` (lines 919-968) |
-| **Daily Email Reports** | HTML email with 5 tables: daily cost, monthly cost, OCPU daily, storage daily, OCPU by service | `shell_scripts/run_daily_report.sh` |
-| **CSV Exports** | Cost exports by compartment/service/SKU for external tools or ERP integration | `shell_scripts/run_report_compart_service_daily_to_csv.sh` |
-| **Multi-Tenant** | Load cost data from multiple OCI tenancies into one ADW for consolidated reporting | `shell_scripts/run_multi_daily_usage2adw.sh` |
-| **Public Rate Card** | Compares your actual costs against public PAYG pricing | `usage2adw.py` (OCI_PRICE_LIST table) |
-| **FOCUS Reports (Beta)** | FinOps standard cost format for multi-cloud reporting | `focus2adw/focus2adw.py` |
-
-### 2. ExaCC-Specific Value
-
-- **Fixed infrastructure cost tracking**: ExaCC rack costs appear as recurring line items - track actual consumption vs. committed capacity
-- **VM Cluster monitoring**: `OCI_SHOWOCI_DATABASE_EXA_CC_VMS` captures shape, cpu_core_count, shape_ocpus, db_storage_gb, memory_gb, node_count, GI version, maintenance windows
-- **ADB-D cost tracking**: Per-ADB instance costs on Dedicated Exadata Infrastructure
-- **Compartment-based chargeback**: Cost data includes `PRD_COMPARTMENT_NAME` and `PRD_COMPARTMENT_PATH` for org-level allocation
-- **Database inventory**: `OCI_SHOWOCI_DATABASES` and `OCI_SHOWOCI_DATABASES_PDBS` tables capture all database instances and PDBs
-
-### 3. Database Tables Created
-
-**Core tables**: `OCI_COST`, `OCI_COST_STATS`, `OCI_COST_TAG_KEYS`, `OCI_COST_REFERENCE`, `OCI_PRICE_LIST`, `OCI_LOAD_STATUS`
-
-**ExaCC-relevant ShowOCI tables** (subset of 88+ total):
-- `OCI_SHOWOCI_DATABASE_EXA_INFRA` - Exadata rack details
-- `OCI_SHOWOCI_DATABASE_EXA_CC_VMS` - ExaCC VM Clusters (OCPU, memory, storage, maintenance)
-- `OCI_SHOWOCI_DATABASES` - All database instances
-- `OCI_SHOWOCI_DATABASES_PDBS` - PDB inventory
-- `OCI_SHOWOCI_DATABASES_ADB` - Autonomous Database instances
-- `OCI_SHOWOCI_DATABASE_BACKUPS` - Backup inventory
-- `OCI_SHOWOCI_COMPUTE` - Compute instances
-- `OCI_SHOWOCI_NETWORK_VCN` / `OCI_SHOWOCI_NETWORK_SUBNET` - Network topology
-- `OCI_SHOWOCI_MONITOR_DB_MANAGEMENT` - DB Management status
+> **Disclaimer**: This is NOT official Oracle billing. Use OCI Cost Analysis for official calculations.
 
 ---
 
@@ -56,189 +21,297 @@ This repository (**Usage2ADW** by Adi Zohar, Oracle open-source, v25.10.01) is a
 
 ```
 +------------------------------------------------------------------+
-|                   Customer Data Center (On-Premises)              |
+|              Your Data Center (Private Domain)                    |
 |                                                                   |
-|  +-------------------------+    +-----------------------------+   |
-|  | ExaCC Infrastructure    |    | (Optional) On-Prem VM       |   |
-|  | - Exadata Racks         |    | - For on-prem deployment    |   |
-|  | - VM Clusters           |    | - Uses User API Keys        |   |
-|  | - ADB-D Instances       |    +-----------------------------+   |
-|  | - Oracle Databases      |                                      |
+|  +-------------------------+  +-------------------------------+   |
+|  | ExaCC Infrastructure    |  | RHEL 9 / Windows Servers      |   |
+|  | - Exadata Racks         |  | - Ansible Control Node        |   |
+|  | - VM Clusters           |  | - Browser access to APEX      |   |
+|  | - ADB-D Instances       |  | - OCI CLI configured          |   |
+|  | - Oracle Databases      |  +-------------------------------+   |
 |  +-------------------------+                                      |
 |  +-------------------------+                                      |
-|  | OEM Server              |    (Complementary to Usage2ADW)      |
+|  | OEM Server              |  (Complementary monitoring)          |
 |  +-------------------------+                                      |
 +------------------------------------------------------------------+
-          |  FastConnect / VPN
+          |  FastConnect / VPN / Private Peering
           v
 +------------------------------------------------------------------+
-|                     OCI Cloud (Control Plane)                     |
+|                  OCI Cloud (Prod Tenancy)                         |
 |                                                                   |
-|  +-------------------------+    +-----------------------------+   |
-|  | Object Storage          |    | Usage2ADW VM (OL8)          |   |
-|  | "bling" bucket          |--->| - Python 3.9 + OCI SDK      |   |
-|  | (Cost CSV files)        |    | - usage2adw.py              |   |
-|  +-------------------------+    | - Instance Principals auth   |   |
-|                                 +------------|----------------+   |
-|  +-------------------------+                 |                    |
-|  | KMS Vault               |                 v                    |
-|  | - DB Password Secret    |    +-----------------------------+   |
-|  +-------------------------+    | Autonomous Data Warehouse    |   |
-|                                 | - OCI_COST tables            |   |
-|  +-------------------------+    | - OCI_SHOWOCI_* tables       |   |
-|  | OCI Email Delivery      |    | - APEX Workspace + App       |   |
-|  | - Daily email reports   |    +-----------------------------+   |
-|  +-------------------------+         ^                            |
-|                                      | (APEX access via LB       |
-|                                      |  or Private Endpoint)     |
+|  +-------------------------+  +-------------------------------+   |
+|  | Object Storage          |  | Usage2ADW VM (Oracle Linux 8)  |  |
+|  | "bling" bucket (Prod)   |->| - Python 3.9 + OCI SDK         |  |
+|  +-------------------------+  | - usage2adw.py                 |  |
+|                               | - Instance Principals           |  |
+|  +-------------------------+  | - Postfix (email)              |  |
+|  | Object Storage          |  +--------------|----------------+   |
+|  | "bling" bucket (Dev)    |->|              |                    |
+|  +-------------------------+  |              v                    |
+|                               | +-----------------------------+  |
+|  +-------------------------+  | | ADW-S (2 ECPU, 1TB, 23ai)  |  |
+|  | KMS Vault               |  | | - OCI_COST tables           |  |
+|  | - DB Password Secret    |  | | - OCI_SHOWOCI_* tables      |  |
+|  +-------------------------+  | | - APEX Workspace + App      |  |
+|                               | +-----------------------------+  |
+|  +-------------------------+  |        ^                         |
+|  | OCI Email Delivery      |  |        | HTTPS (443)             |
+|  +-------------------------+  | +-----------------------------+  |
+|                               | | Load Balancer (Public)      |  |
+|                               | | -> Private Endpoint ADW     |  |
+|                               | +-----------------------------+  |
 +------------------------------------------------------------------+
 ```
 
-**Recommended deployment**: VM + ADW in OCI public cloud (same region as ExaCC control plane), with Instance Principals authentication. APEX accessed from corporate network via Load Balancer or VPN. This is what the Terraform at `terraform/` automates entirely.
+---
+
+## Excel Task Tracker - Complete Step-by-Step
+
+> **Excel columns**: Task ID | Phase | Task Description | Owner | Exact Command/Action | Depends On | Verification | Status | Notes
 
 ---
 
-## Implementation Roadmap
+### PHASE 0: PREREQUISITES & PLANNING (Week 1)
 
-### Phase 0: Prerequisites (Week 1)
-
-1. **Validate network connectivity** - Confirm ExaCC control plane region, verify VCN exists with NAT Gateway for outbound OCI API access
-2. **Create IAM resources** - Dynamic Group matching the Usage2ADW VM, Policy with required statements (see `terraform/modules/iam/main.tf` lines 40-47):
-   ```
-   define tenancy usage-report as ocid1.tenancy.oc1..aaaaaaaaned4fkpkisbwjlr56u7cj63lf3wffbilvqknstgtvzub7vhqkggq
-   endorse dynamic-group UsageDownloadGroup to read objects in tenancy usage-report
-   Allow dynamic-group UsageDownloadGroup to inspect compartments in tenancy
-   Allow dynamic-group UsageDownloadGroup to inspect tenancies in tenancy
-   Allow dynamic-group UsageDownloadGroup to read autonomous-databases in compartment <APPCOMP>
-   Allow dynamic-group UsageDownloadGroup to read secret-bundles in compartment <APPCOMP>
-   ```
-3. **Create KMS Vault + Secret** - Store the ADW admin password in OCI Vault
-4. **Define tag strategy** - Decide TAG_SPECIAL mappings (e.g., CostCenter, Department, Environment, Project) and ensure ExaCC resources are tagged
-
-### Phase 1: Core Deployment (Week 2)
-
-**Using Terraform (Recommended)**:
-1. Upload repo ZIP to OCI Resource Manager
-2. Set Working Directory to `usage-reports-to-adw-main/terraform`
-3. Configure: compartment, VCN/subnet, ADW (Private Endpoint), Secret OCID, VM shape, tag special keys, extract start date
-4. Apply stack - creates ADW, VM, network, IAM (~10 min bootstrap)
-5. SSH to VM, verify: `cat /home/opc/boot.log`
-
-**Key files**: `terraform/main.tf`, `terraform/variables.tf`, `terraform/modules/*/main.tf`
-
-### Phase 2: Verification (Week 2-3)
-
-1. Run connectivity check: `python3 usage2adw_check_connectivity.py` (tests all OCI API access)
-2. Verify data load: check `/home/opc/usage_reports_to_adw/report/local/*.txt` for "Rows Inserted"
-3. Login to APEX (Workspace=Usage, User=Usage) - verify ExaCC costs appear
-4. Filter by service = "Database" / "Exadata" to confirm ExaCC-specific line items
-
-### Phase 3: ShowOCI Resource Inventory (Week 3-4)
-
-1. Add IAM policy: `Allow dynamic-group UsageDownloadGroup to read all-resources in tenancy`
-2. Install ShowOCI on VM
-3. Run initial extract: `/home/opc/showoci/run_daily_report.sh`
-4. Load CSVs to ADW: `shell_scripts/run_load_showoci_csv_to_adw.sh`
-5. Verify `OCI_SHOWOCI_DATABASE_EXA_CC_VMS` table is populated with your ExaCC VM Clusters
-
-### Phase 4: Email Reports and Alerting (Week 4-5)
-
-1. Set up OCI Email Delivery (Approved Sender + SMTP credentials)
-2. Install Postfix on VM, configure SMTP relay
-3. Update `shell_scripts/run_daily_report.sh`: set `MAIL_FROM_EMAIL` and `MAIL_TO`
-4. Schedule crontab (see Operational Procedures below)
-5. Optional: configure APEX email subscriptions for self-service report delivery
-
-### Phase 5: Customization (Week 5-8)
-
-- **Tag-based chargebacks**: Configure `-ts CostCenter -ts2 Department -ts3 Environment -ts4 Project`
-- **Custom APEX dashboards**: ExaCC infrastructure page, department cost allocation, capacity planning
-- **Custom SQL views**: Per-database cost allocation by distributing VM Cluster costs proportionally:
-  ```sql
-  -- Example: Allocate ExaCC costs by per-DB OCPU share
-  SELECT d.name AS database_name,
-         d.cpu_core_count AS db_cpus,
-         vm.cpu_core_count AS cluster_cpus,
-         c.COST_MY_COST * (d.cpu_core_count / NULLIF(vm.cpu_core_count, 0)) AS allocated_cost
-  FROM OCI_COST c
-  JOIN OCI_SHOWOCI_DATABASE_EXA_CC_VMS vm ON ...
-  JOIN OCI_SHOWOCI_DATABASES d ON ...
-  WHERE c.PRD_SERVICE = 'DATABASE';
-  ```
-- **CSV exports**: Clone `run_report_compart_service_daily_to_csv.sh` for ExaCC-specific cost exports
-
-### Phase 6: Production Hardening (Week 6-8)
-
-- Switch ADW to Private Endpoint (if not already)
-- Implement Load Balancer for APEX access
-- Set up VM monitoring (OCI Monitoring Agent)
-- Configure backup strategy
-- Create additional APEX users per `step_by_step_howto.md` section 1
-- Document operational runbook
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P0-001 | Identify OCI Prod tenancy OCID | OCI Console > Administration > Tenancy Details > Copy OCID (`ocid1.tenancy.oc1..xxx`) | - | OCID noted |
+| P0-002 | Identify OCI Dev tenancy OCID | OCI Console > Administration > Tenancy Details > Copy OCID | - | OCID noted |
+| P0-003 | Identify Prod tenancy home region | OCI Console > Administration > Tenancy Details > Home Region (e.g., `us-ashburn-1`) | P0-001 | Region noted |
+| P0-004 | Identify ExaCC control plane region | Same region as ExaCC was provisioned in | P0-003 | Matches Prod home region |
+| P0-005 | Verify FastConnect/VPN connectivity | Confirm on-prem servers can reach OCI API endpoints via private network | - | `curl -I https://identity.<region>.oraclecloud.com` from on-prem |
+| P0-006 | Choose OCI Compartment for Usage2ADW | OCI Console > Identity > Compartments > Create Compartment (e.g., `Usage2ADW`) | P0-001 | Compartment OCID noted |
+| P0-007 | Choose VCN and Subnet for VM | OCI Console > Networking > VCNs > Select existing VCN with NAT Gateway + Service Gateway | P0-006 | VCN OCID + Subnet OCID noted |
+| P0-008 | Choose Subnet for Load Balancer | Select a public subnet in the same VCN (for APEX access from on-prem) | P0-007 | LB Subnet OCID noted |
+| P0-009 | Generate SSH key pair | `ssh-keygen -t rsa -b 4096 -f ~/.ssh/usage2adw_key` (on Ansible control node) | - | Public key file ready |
+| P0-010 | Define tag strategy for cost allocation | Decide 4 tag keys: TAG_SPECIAL=`CostCenter`, TAG_SPECIAL2=`Department`, TAG_SPECIAL3=`Environment`, TAG_SPECIAL4=`Project` | - | 4 tag key names documented |
+| P0-011 | Create OCI Tag Namespace | OCI Console > Governance > Tag Namespaces > Create (e.g., `CostTracking`) | P0-010 | Namespace created |
+| P0-012 | Create OCI Tag Keys | Create keys: `CostCenter`, `Department`, `Environment`, `Project` under namespace | P0-011 | 4 tag keys created |
+| P0-013 | Tag all ExaCC resources | Apply tags to VM Clusters, ADB instances, databases in both Prod & Dev | P0-012 | Resources tagged in OCI Console |
+| P0-014 | Choose ADW admin password | Generate password: 12-30 chars, 1 upper, 1 lower, 1 number, only `#` or `_` for symbols | - | Password securely stored |
+| P0-015 | Create KMS Vault | OCI Console > Security > Vault > Create Vault (in Usage2ADW compartment) | P0-006 | Vault OCID noted |
+| P0-016 | Create Master Encryption Key | Vault > Master Encryption Keys > Create Key (AES, 256-bit) | P0-015 | Key OCID noted |
+| P0-017 | Create Secret for ADW password | Vault > Secrets > Create Secret > paste ADW admin password | P0-016, P0-014 | Secret OCID noted (critical - save this) |
+| P0-018 | Choose extract start date | Decide how far back to load cost data (format: `YYYY-MM`, e.g., `2024-01`) | - | Date documented |
+| P0-019 | Create OCI API key for Dev tenancy | OCI Console (Dev) > Identity > Users > API Keys > Add API Key > Download PEM | P0-002 | Config file snippet saved with user OCID, fingerprint, tenancy OCID, region, key_file path |
+| P0-020 | Document all collected OCIDs | Create a spreadsheet with: Prod Tenancy OCID, Dev Tenancy OCID, Compartment OCID, VCN OCID, VM Subnet OCID, LB Subnet OCID, Secret OCID, Dev API Key path | All above | Master OCID reference sheet complete |
 
 ---
 
-## Operational Procedures
+### PHASE 1: OCI INFRASTRUCTURE DEPLOYMENT (Week 2)
 
-### Crontab Schedule
+**Option A: Terraform via OCI Resource Manager (Recommended)**
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P1-001 | Download repository ZIP | Download from GitHub: `https://github.com/oracle-samples/usage-reports-to-adw` > Code > Download ZIP | - | ZIP file downloaded |
+| P1-002 | Login to OCI Console (Prod) | Navigate to OCI Console with admin credentials | P0-001 | Logged in |
+| P1-003 | Create Resource Manager Stack | OCI Console > Developer Services > Resource Manager > Stacks > Create Stack > Upload ZIP | P1-001 | Stack created |
+| P1-004 | Set Terraform Working Directory | Set to: `usage-reports-to-adw-main/terraform` | P1-003 | Directory set |
+| P1-005 | Configure Stack - Compartment | Select compartment: `Usage2ADW` (from P0-006) | P1-004 | Compartment selected |
+| P1-006 | Configure Stack - Tags | Set freeform tags: `Project=Usage2ADW` | P1-004 | Tags configured |
+| P1-007 | Configure Stack - IAM | Select: "New IAM Dynamic Group and Policy will be created". Set names: `Usage2ADW_DynGroup`, `Usage2ADW_Policy` | P1-004 | IAM option selected |
+| P1-008 | Configure Stack - Network | Select VCN (P0-007), Subnet (P0-007). Option: "Provision Public Load Balancer". LB Subnet (P0-008). LB Name: `Usage2ADW_LB` | P1-004 | Network configured |
+| P1-009 | Configure Stack - Database | Option: "Private Endpoint". DB Name: `ADWCUSG`. License: `BRING_YOUR_OWN_LICENSE` (if you have licenses) or `LICENSE_INCLUDED`. Secret Compartment + Secret OCID (P0-017) | P1-004 | ADW config set: 2 ECPU, 1TB, 23ai |
+| P1-010 | Configure Stack - Compute | Shape: `VM.Standard.E4.Flex` (1 OCPU, 15GB RAM). SSH Key: paste public key from P0-009. Name: `Usage2ADW-VM` | P1-004 | Compute configured |
+| P1-011 | Configure Stack - Extraction | Extract From Date: value from P0-018. Tag Special 1: `CostCenter`. Tag Special 2: `Department`. Tag Special 3: `Environment`. Tag Special 4: `Project` | P1-004, P0-010 | Tags configured |
+| P1-012 | Review Terraform Plan | Click "Plan" > Review plan output for resources to be created | P1-005 to P1-011 | Plan shows: 1 ADW, 1 VM, 1 NSG, 1 LB, 1 Dynamic Group, 1 Policy |
+| P1-013 | Apply Terraform Stack | Click "Apply" > Confirm | P1-012 | Job status: SUCCEEDED |
+| P1-014 | Record Terraform Outputs | Copy all outputs: APEX URLs, LB IP, VM Private IP, VM Public IP, DB Secret ID | P1-013 | All outputs recorded in spreadsheet |
+| P1-015 | Wait for bootstrap completion | Bootstrap takes ~10 minutes after Terraform completes (80s IAM wait + setup_full) | P1-013 | Wait 15 min |
+| P1-016 | SSH into Usage2ADW VM | `ssh -i ~/.ssh/usage2adw_key opc@<VM_PUBLIC_IP>` | P1-014 | Connected successfully |
+| P1-017 | Verify bootstrap log | `cat /home/opc/boot.log` - check for "completed successfully" | P1-016 | No errors in boot.log |
+| P1-018 | Verify config.user created | `cat /home/opc/usage_reports_to_adw/config.user` | P1-016 | Shows DATABASE_USER=USAGE, DATABASE_NAME, SECRET_ID, TAG_SPECIAL values |
+| P1-019 | Verify Python packages | `python3 -c "import oci; import oracledb; import requests; print('OK')"` | P1-016 | Prints "OK" |
+| P1-020 | Verify Oracle Instant Client | `/usr/lib/oracle/current/client64/bin/sqlplus -V` | P1-016 | Shows version 23.x |
+| P1-021 | Verify ADW wallet | `ls -la /home/opc/ADWCUSG/` | P1-016 | Contains: cwallet.sso, tnsnames.ora, sqlnet.ora, etc. |
+| P1-022 | Verify crontab installed | `crontab -l` | P1-016 | Shows run_multi_daily_usage2adw.sh and run_gather_stats.sh entries |
+
+---
+
+### PHASE 2: VERIFICATION & INITIAL DATA LOAD (Week 2-3)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P2-001 | Run connectivity check | `cd /home/opc/usage_reports_to_adw && python3 usage2adw_check_connectivity.py` | P1-016 | All 6 checks pass: Identity, Tenancy, Regions, Home Region, Compartments, Object Storage |
+| P2-002 | Verify initial data load ran | `ls -la /home/opc/usage_reports_to_adw/report/local/` | P1-017 | Report files exist with today's date |
+| P2-003 | Check load results | `cat /home/opc/usage_reports_to_adw/report/local/*.txt \| grep -E "Rows Inserted\|Total.*Files"` | P2-002 | Shows "Rows Inserted" > 0 and "Total X Cost Files Loaded" |
+| P2-004 | Check for errors | `cat /home/opc/usage_reports_to_adw/report/local/*.txt \| grep -i error` | P2-002 | No errors found |
+| P2-005 | Login to APEX (via LB) | Browser: `https://<LB_IP>/ords/f?p=100:LOGIN_DESKTOP` Workspace: `USAGE`, User: `USAGE`, Password: (your secret from P0-014) | P1-014 | APEX dashboard loads |
+| P2-006 | Verify Cost Analysis page | APEX > Cost Analysis > Check data appears | P2-005 | Cost data visible with chart/table |
+| P2-007 | Filter ExaCC costs | Cost Analysis > Filter by Service = "Database" or "Exadata" | P2-006 | ExaCC infrastructure costs appear |
+| P2-008 | Check compartment breakdown | Cost Analysis > Filter by Compartment | P2-006 | Compartments match your org structure |
+| P2-009 | Verify Data Statistics page | APEX > Data Statistics page | P2-005 | Shows OCI_LOAD_STATUS with loaded files, timestamps |
+| P2-010 | Verify Rate Card | APEX > Rate Card page | P2-005 | Shows pricing data for your SKUs |
+| P2-011 | Verify tag columns | APEX > Cost Analysis > Check TAG_SPECIAL filters appear | P2-005 | Tag-based filtering works |
+| P2-012 | Run manual data load | `/home/opc/usage_reports_to_adw/shell_scripts/run_multi_daily_usage2adw.sh` | P2-001 | Completes without errors |
+| P2-013 | Check table sizes | `/home/opc/usage_reports_to_adw/shell_scripts/run_table_size_info.sh` | P2-012 | OCI_COST table shows data size |
+
+---
+
+### PHASE 3: ADD DEV TENANCY (Week 3)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P3-001 | Copy Dev API key to VM | `scp -i ~/.ssh/usage2adw_key dev_api_private_key.pem opc@<VM_IP>:/home/opc/.oci/` | P0-019 | Key file on VM |
+| P3-002 | Create OCI config for Dev | Create `/home/opc/.oci/config` with `[dev]` profile section containing: user, fingerprint, tenancy, region, key_file for Dev tenancy | P3-001 | Config file with [dev] profile |
+| P3-003 | Create IAM Policy on Dev tenancy | On Dev tenancy OCI Console, create policy: `define tenancy usage-report as ocid1.tenancy.oc1..aaaaaaaaned4fkpkisbwjlr56u7cj63lf3wffbilvqknstgtvzub7vhqkggq` + `endorse group <DevGroup> to read objects in tenancy usage-report` + `Allow group <DevGroup> to inspect compartments in tenancy` + `Allow group <DevGroup> to inspect tenancies in tenancy` | P0-002 | Policy created on Dev tenancy |
+| P3-004 | Test Dev connectivity | `python3 usage2adw_check_connectivity.py -t dev -c /home/opc/.oci/config` | P3-002, P3-003 | All checks pass for Dev tenancy |
+| P3-005 | Edit multi-tenant run script | Edit `/home/opc/usage_reports_to_adw/shell_scripts/run_multi_daily_usage2adw.sh` - Add line at bottom: `run_report dev CostCenter Department Environment Project` | P3-004 | Script updated |
+| P3-006 | Run multi-tenant load | `/home/opc/usage_reports_to_adw/shell_scripts/run_multi_daily_usage2adw.sh` | P3-005 | Both Prod (local) and Dev tenants load |
+| P3-007 | Verify Dev data in APEX | APEX > Cost Analysis > Filter by Tenant = Dev tenant name | P3-006 | Dev tenancy costs visible |
+| P3-008 | Verify consolidated view | APEX > Cost Over Time > View both tenants | P3-007 | Both Prod and Dev data in single dashboard |
+
+---
+
+### PHASE 4: SHOWOCI RESOURCE INVENTORY (Week 3-4)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P4-001 | Add ShowOCI IAM policy (Prod) | OCI Console (Prod) > Identity > Policies > Edit Usage2ADW_Policy > Add: `Allow dynamic-group Usage2ADW_DynGroup to read all-resources in tenancy` | P1-013 | Policy updated |
+| P4-002 | Install ShowOCI on VM | SSH to VM: `bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-python-sdk/master/examples/showoci/showoci_upgrade.sh)"` | P4-001 | ShowOCI installed at `/home/opc/showoci/` |
+| P4-003 | Set ShowOCI permissions | `chmod +x /home/opc/showoci/run_daily_report.sh` | P4-002 | Executable |
+| P4-004 | Create cron output dir | `mkdir -p /home/opc/usage_reports_to_adw/cron` | P4-002 | Directory exists |
+| P4-005 | Run ShowOCI initial extract | `/home/opc/showoci/run_daily_report.sh` (takes 1-4 hours for large tenancies) | P4-003 | CSV files generated at `/home/opc/showoci/report/local/csv/local/` |
+| P4-006 | Verify ShowOCI CSV files | `ls -la /home/opc/showoci/report/local/csv/local/` | P4-005 | Files include: `database_db_exacc.csv`, `database_db_exa_infra.csv`, `compute.csv`, etc. |
+| P4-007 | Download ShowOCI CSV loader | `wget https://raw.githubusercontent.com/oracle-samples/usage-reports-to-adw/main/shell_scripts/run_load_showoci_csv_to_adw.sh -O /home/opc/usage_reports_to_adw/shell_scripts/run_load_showoci_csv_to_adw.sh && chmod +x /home/opc/usage_reports_to_adw/shell_scripts/run_load_showoci_csv_to_adw.sh` | P4-004 | Script downloaded |
+| P4-008 | Load ShowOCI CSVs to ADW | `/home/opc/usage_reports_to_adw/shell_scripts/run_load_showoci_csv_to_adw.sh` | P4-006, P4-007 | Completes without errors |
+| P4-009 | Verify ExaCC infra table | SSH to VM: `/home/opc/usage_reports_to_adw/shell_scripts/run_sqlplus_usage.sh` then: `SELECT count(*) FROM OCI_SHOWOCI_DATABASE_EXA_INFRA;` | P4-008 | Count > 0 (matches your Exadata rack count) |
+| P4-010 | Verify ExaCC VM Clusters table | `SELECT name, shape, cpu_core_count, db_storage_gb, memory_gb, node_count FROM OCI_SHOWOCI_DATABASE_EXA_CC_VMS;` | P4-008 | Shows your ExaCC VM Clusters |
+| P4-011 | Verify databases table | `SELECT count(*) FROM OCI_SHOWOCI_DATABASES;` | P4-008 | Count matches your database count |
+| P4-012 | Verify PDBs table | `SELECT count(*) FROM OCI_SHOWOCI_DATABASES_PDBS;` | P4-008 | Count matches your PDB count |
+| P4-013 | Verify APEX ShowOCI page | APEX > ShowOCI Data page > Check infrastructure inventory displays | P4-008 | ExaCC data visible in dashboards |
+| P4-014 | Add ShowOCI crontab entries | `crontab -e` and add: `0 0 * * * timeout 23h /home/opc/showoci/run_daily_report.sh > /home/opc/showoci/run_daily_report_crontab_run.txt 2>&1` and `00 8 * * * timeout 2h /home/opc/usage_reports_to_adw/shell_scripts/run_load_showoci_csv_to_adw.sh > /home/opc/usage_reports_to_adw/cron/run_load_showoci_csv_to_adw.sh_run.txt 2>&1` | P4-008 | `crontab -l` shows both entries |
+
+---
+
+### PHASE 5: EMAIL REPORTS (Week 4-5)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P5-001 | Create Approved Sender in OCI | OCI Console > Solutions and Platform > Email Delivery > Approved Senders > Create: `costreport@yourdomain.com` | - | Sender approved |
+| P5-002 | Generate SMTP credentials | OCI Console > Identity > Users > select user > SMTP Credentials > Generate. **Save username and password immediately** | P5-001 | SMTP username + password saved securely |
+| P5-003 | Note SMTP endpoint for your region | Look up endpoint (e.g., Ashburn: `smtp.us-ashburn-1.oraclecloud.com`, Phoenix: `smtp.us-phoenix-1.oraclecloud.com`) | P5-001 | SMTP endpoint noted |
+| P5-004 | Install Postfix on VM | SSH to VM: `sudo dnf install -y postfix` | P1-016 | Package installed |
+| P5-005 | Configure firewall for SMTP | `sudo firewall-cmd --zone=public --add-service=smtp --permanent && sudo firewall-cmd --reload` | P5-004 | SMTP port open |
+| P5-006 | Remove sendmail if present | `sudo dnf remove -y sendmail 2>/dev/null; sudo alternatives --set mta /usr/sbin/sendmail.postfix` | P5-004 | Sendmail removed |
+| P5-007 | Install mailx | `sudo dnf install -y mailx` | P5-004 | Installed |
+| P5-008 | Configure Postfix main.cf | Edit `/etc/postfix/main.cf` - add: `smtp_tls_security_level = may`, `smtp_sasl_auth_enable = yes`, `smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd`, `smtp_sasl_security_options =`, `relayhost = <SMTP_ENDPOINT>:587` | P5-003 | Config updated |
+| P5-009 | Configure SMTP credentials file | Create `/etc/postfix/sasl_passwd` with: `<SMTP_ENDPOINT>:587 <SMTP_USERNAME>:<SMTP_PASSWORD>` | P5-002, P5-003 | File created |
+| P5-010 | Secure SMTP credentials | `sudo chown root:root /etc/postfix/sasl_passwd && sudo chmod 600 /etc/postfix/sasl_passwd && sudo postmap hash:/etc/postfix/sasl_passwd` | P5-009 | Permissions set, hash map created |
+| P5-011 | Start Postfix | `sudo systemctl enable postfix && sudo postfix start && sudo postfix reload` | P5-008, P5-010 | Service running |
+| P5-012 | Test email delivery | `echo "Test from Usage2ADW" \| mail -s "Test" -r "costreport@yourdomain.com" your.email@company.com` | P5-011 | Test email received |
+| P5-013 | Configure daily report script | Edit `/home/opc/usage_reports_to_adw/shell_scripts/run_daily_report.sh` - Set: `MAIL_FROM_EMAIL="costreport@yourdomain.com"`, `MAIL_TO="team-dl@company.com"` | P5-012 | Variables updated |
+| P5-014 | Test daily report manually | `/home/opc/usage_reports_to_adw/shell_scripts/run_daily_report.sh` | P5-013, P2-012 | HTML email received with 5 report tables |
+| P5-015 | Add daily report to crontab | `crontab -e` - add: `0 7 * * * timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_daily_report.sh > /home/opc/usage_reports_to_adw/shell_scripts/run_daily_report_crontab_run.txt 2>&1` | P5-014 | Crontab entry verified |
+| P5-016 | Configure tenant usage report (optional) | Edit `shell_scripts/run_tenant_usage_report.sh` - add entries: `run_report <prod_name> <prod_id> "prod-team@company.com"` and `run_report <dev_name> <dev_id> "dev-team@company.com"` | P5-012, P3-006 | Per-tenant emails configured |
+| P5-017 | Configure APEX email (optional) | Connect as ADMIN to ADW via sqlplus: `BEGIN APEX_INSTANCE_ADMIN.SET_PARAMETER('SMTP_HOST_ADDRESS','<SMTP_ENDPOINT>'); APEX_INSTANCE_ADMIN.SET_PARAMETER('SMTP_USERNAME','<SMTP_USER>'); APEX_INSTANCE_ADMIN.SET_PARAMETER('SMTP_PASSWORD','<SMTP_PASS>'); COMMIT; END;` | P5-011 | APEX can send subscription emails |
+
+---
+
+### PHASE 6: ANSIBLE AUTOMATION (Week 5-6)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P6-001 | Install Ansible on RHEL 9 control node | On-prem RHEL 9: `sudo dnf install -y ansible-core` | - | `ansible --version` shows 2.14+ |
+| P6-002 | Install OCI Ansible collection | `ansible-galaxy collection install oracle.oci` | P6-001 | Collection installed |
+| P6-003 | Configure OCI SDK on control node | Install OCI CLI: `bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"` and configure `~/.oci/config` | P6-001 | `oci iam tenancy get --tenancy-id <OCID>` works |
+| P6-004 | Create Ansible inventory file | Create `inventory/hosts.yml` with Usage2ADW VM IP under `[usage2adw]` group, SSH key path | P1-014 | Inventory file ready |
+| P6-005 | Create Ansible playbook - VM health check | Playbook `playbooks/healthcheck.yml`: Check python3, OCI SDK, Instant Client, wallet, crontab, disk space | P6-004 | Playbook runs successfully |
+| P6-006 | Create Ansible playbook - config management | Playbook `playbooks/configure.yml`: Template `config.user`, update `run_multi_daily_usage2adw.sh` with tenant list, update `run_daily_report.sh` with email settings | P6-004 | Config files managed by Ansible |
+| P6-007 | Create Ansible playbook - upgrade | Playbook `playbooks/upgrade.yml`: Run `usage2adw_setup.sh -upgrade_app` when new version released | P6-004 | Upgrade automated |
+| P6-008 | Create Ansible playbook - crontab | Playbook `playbooks/crontab.yml`: Use `ansible.builtin.cron` module to manage all 5 crontab entries | P6-004 | Crontab managed by Ansible |
+| P6-009 | Create Ansible playbook - monitoring | Playbook `playbooks/monitor.yml`: Check log files for errors, verify last load timestamp, check disk space, alert on failures | P6-004 | Monitoring automated |
+| P6-010 | Create Ansible playbook - wallet refresh | Playbook `playbooks/refresh_wallet.yml`: Run `usage2adw_setup.sh -download_wallet` | P6-004 | Wallet refresh automated |
+| P6-011 | Test all playbooks | Run each playbook against the Usage2ADW VM | P6-005 to P6-010 | All playbooks execute successfully |
+| P6-012 | Schedule Ansible monitoring via cron (control node) | Add to Ansible control node crontab: Run `monitor.yml` every 6 hours | P6-011 | Automated health checks running |
+
+---
+
+### PHASE 7: CSV EXPORTS & CUSTOM REPORTS (Week 5-6)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P7-001 | Test compartment/service CSV export | `/home/opc/usage_reports_to_adw/shell_scripts/run_report_compart_service_daily_to_csv.sh` | P2-012 | CSV file at `report/daily/daily_compartment_service_YYYYMMDD.csv` |
+| P7-002 | Test compartment/service/SKU CSV export | `/home/opc/usage_reports_to_adw/shell_scripts/run_report_compart_service_sku_daily_to_csv.sh` | P2-012 | CSV with tenant, date, compartment, service, sku, desc, total |
+| P7-003 | Schedule CSV exports in crontab | Add: `0 9 * * * /home/opc/usage_reports_to_adw/shell_scripts/run_report_compart_service_daily_to_csv.sh` | P7-001 | Daily CSV files generated |
+| P7-004 | Create ExaCC cost allocation SQL view | Connect to ADW as USAGE user. Create `VIEW VW_EXACC_COST_BY_DB` joining OCI_COST + OCI_SHOWOCI_DATABASE_EXA_CC_VMS + OCI_SHOWOCI_DATABASES to allocate costs by OCPU share | P4-010 | View returns per-database cost allocation |
+| P7-005 | Create monthly chargeback SQL view | Create `VIEW VW_MONTHLY_CHARGEBACK` grouping OCI_COST by TAG_SPECIAL (CostCenter), TAG_SPECIAL2 (Department), month | P2-011 | View returns department-level monthly costs |
+| P7-006 | Create APEX custom page (optional) | APEX > App Builder > Create Page > Report on VW_MONTHLY_CHARGEBACK | P7-005 | Custom chargeback page accessible |
+
+---
+
+### PHASE 8: PRODUCTION HARDENING (Week 6-8)
+
+| ID | Task | Exact Action / Command | Depends On | Verification |
+|----|------|----------------------|------------|--------------|
+| P8-001 | Verify ADW Private Endpoint | OCI Console > ADW > Network > Confirm Private Endpoint enabled, NSG attached with ports 1522 + 443 | P1-013 | Private Endpoint active |
+| P8-002 | Verify Load Balancer health | OCI Console > Networking > Load Balancers > Check backend health = OK | P1-013 | Backend healthy, LB IP accessible |
+| P8-003 | Test APEX from on-prem browser | From Windows/RHEL desktop: `https://<LB_IP>/ords/f?p=100:LOGIN_DESKTOP` | P8-002, P0-005 | APEX loads from on-prem network |
+| P8-004 | Create additional APEX users | APEX > Administration > Manage Users and Groups > Create User for each team member (Finance, Ops, Management) | P2-005 | Users created with appropriate access |
+| P8-005 | Update OCI_TENANT display names | APEX > Tenant Display Update page > Set friendly names for Prod and Dev tenants | P3-007 | Tenant names show as "Production" and "Development" in reports |
+| P8-006 | Verify ADW auto-backup | OCI Console > ADW > Backups > Confirm automatic backups enabled | P1-013 | Backups listed |
+| P8-007 | Set up OCI Monitoring for VM | OCI Console > Monitoring > Alarms > Create alarm for VM CPU > 80%, Disk > 90% | P1-013 | Alarms configured |
+| P8-008 | Set up OCI Notifications | OCI Console > Notifications > Create Topic + Subscription (email) for alarm notifications | P8-007 | Email alerts configured |
+| P8-009 | Document runbook | Create operations document covering: daily checks, error recovery, wallet refresh, upgrade procedure, password rotation, troubleshooting | All phases | Runbook document complete |
+| P8-010 | Conduct team training | Walk through APEX dashboards, email reports, and CSV exports with Finance/Ops teams | P8-004 | Team trained |
+
+---
+
+### PHASE 9: ONGOING OPERATIONS (Recurring)
+
+| ID | Task | Frequency | Exact Action | Verification |
+|----|------|-----------|-------------|--------------|
+| P9-001 | Verify daily cost load | Daily | Check `tail -20 /home/opc/usage_reports_to_adw/log/run_multi_daily_usage2adw_crontab_run.txt` for "Completed at" | No errors |
+| P9-002 | Verify ShowOCI extract | Daily | Check `tail -5 /home/opc/showoci/run_daily_report_crontab_run.txt` | Completed successfully |
+| P9-003 | Verify daily email received | Daily | Check inbox for "Cost Usage Report" email | Email received with 5 tables |
+| P9-004 | Check ADW storage | Weekly | Run `run_table_size_info.sh` | Storage within limits |
+| P9-005 | Check VM disk space | Weekly | `df -h` on VM | >20% free |
+| P9-006 | Review cost anomalies | Weekly | APEX > Cost Over Time > Look for spikes | No unexpected cost increases |
+| P9-007 | Run gather stats | Auto (Sunday) | Crontab runs `run_gather_stats.sh` | Verify Monday morning: no ORA- errors |
+| P9-008 | Upgrade Usage2ADW app | As released | `bash -c "export usage2adw_param=-upgrade_app; $(curl -L https://raw.githubusercontent.com/oracle-samples/usage-reports-to-adw/main/usage2adw_setup.sh)"` | New version confirmed |
+| P9-009 | Refresh ADW wallet | Every 6 months | `usage2adw_setup.sh -download_wallet` | New wallet extracted |
+| P9-010 | Rotate ADW password | Per security policy | Change in KMS Vault Secret, then: `ALTER USER USAGE IDENTIFIED BY <new_pass>;` in sqlplus as ADMIN | Load still works |
+| P9-011 | Review tag compliance | Monthly | Check new resources are tagged with CostCenter/Department/Environment/Project | TAG_SPECIAL columns populated |
+
+---
+
+## Complete Crontab Reference (VM: /home/opc)
+
 ```bash
-# Cost data load - midnight daily
-0 0 * * * timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_multi_daily_usage2adw.sh > /home/opc/usage_reports_to_adw/cron_run_multi_tenants_crontab_run.txt 2>&1
+# Usage2ADW cost data load - every 4 hours
+0 */4 * * * timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_multi_daily_usage2adw.sh > /home/opc/usage_reports_to_adw/log/run_multi_daily_usage2adw_crontab_run.txt 2>&1
 
-# ShowOCI extract - midnight daily
+# ShowOCI infrastructure extract - midnight daily
 0 0 * * * timeout 23h /home/opc/showoci/run_daily_report.sh > /home/opc/showoci/run_daily_report_crontab_run.txt 2>&1
 
-# ShowOCI CSV load to ADW - 8am daily
+# ShowOCI CSV load to ADW - 8am daily (after ShowOCI completes)
 00 8 * * * timeout 2h /home/opc/usage_reports_to_adw/shell_scripts/run_load_showoci_csv_to_adw.sh > /home/opc/usage_reports_to_adw/cron/run_load_showoci_csv_to_adw.sh_run.txt 2>&1
 
-# Email report - 9am daily
+# Daily email cost report - 9am
 0 9 * * * timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_daily_report.sh > /home/opc/usage_reports_to_adw/shell_scripts/run_daily_report_crontab_run.txt 2>&1
 
-# Gather stats - Sunday midnight
-30 0 * * 0 timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_gather_stats.sh > /home/opc/usage_reports_to_adw/run_gather_stats_run.txt 2>&1
+# CSV export - 9:30am daily
+30 9 * * * timeout 2h /home/opc/usage_reports_to_adw/shell_scripts/run_report_compart_service_daily_to_csv.sh > /home/opc/usage_reports_to_adw/log/run_csv_export_run.txt 2>&1
+
+# Gather database stats - Sunday 00:30
+30 0 * * 0 timeout 6h /home/opc/usage_reports_to_adw/shell_scripts/run_gather_stats.sh > /home/opc/usage_reports_to_adw/log/run_gather_stats_run.txt 2>&1
 ```
 
-### Monitoring
-- **Daily**: Check load logs for errors, verify APEX Data Statistics page, confirm email delivery
-- **Weekly**: Check ADW storage via `run_table_size_info.sh`, review ShowOCI data freshness
-- **Monthly**: Review cost trends, check VM disk space, upgrade app if new version available
-
 ---
 
-## Integration with Existing Infrastructure
+## Troubleshooting Quick Reference
 
-| Existing System | Integration Approach |
-|----------------|---------------------|
-| **OEM** | Complementary - OEM handles real-time performance monitoring; Usage2ADW handles financial reporting. Create OEM metric extensions that query `OCI_COST` for cost-per-performance analysis |
-| **APEX Servers** | Use ADW's built-in APEX (recommended) - no need for separate servers. OR import `usage2adw_demo_apex_app.sql` into existing APEX if on-prem data residency required |
-| **Oracle Databases** | Can use existing DB instead of ADW (README: "DbaaS can be used as well"). Create user with `connect, resource, dwrole` grants, use standard TNS connectivity |
-| **Oracle Analytics Cloud** | Terraform supports optional OAC deployment (`terraform/modules/oac/main.tf`) for advanced analytics on top of Usage2ADW data |
-
----
-
-## Limitations and Workarounds
-
-| Limitation | Workaround |
-|-----------|------------|
-| No real-time data (24hr latency) | Use OEM/OCI Monitoring for real-time; Usage2ADW for trend analysis |
-| ExaCC costs lack per-database breakdown | Create custom allocation views distributing costs by OCPU/storage share |
-| No built-in budget alerts | Modify `run_daily_report.sh` to check thresholds, or use OCI Budgets |
-| No per-PDB cost breakdown | Use `OCI_SHOWOCI_DATABASES_PDBS` inventory + custom allocation logic |
-| No cost forecasting | Export to Oracle Analytics Cloud for predictive analysis |
-| ShowOCI needs broad read policy | Scope `read all-resources` to specific compartments if possible |
-
----
-
-## Verification
-
-After deployment, verify end-to-end:
-
-1. **Connectivity**: `python3 usage2adw_check_connectivity.py` - all 6 checks must pass
-2. **Data load**: Check `OCI_LOAD_STATUS` table shows files loaded with recent timestamps
-3. **APEX**: Login to APEX workspace, verify Cost Analysis shows ExaCC services
-4. **ShowOCI**: Query `SELECT count(*) FROM OCI_SHOWOCI_DATABASE_EXA_CC_VMS` - should return your ExaCC VM Cluster count
-5. **Email**: Trigger `run_daily_report.sh` manually, verify HTML email received
-6. **Tags**: Verify `TAG_SPECIAL` columns populated in `OCI_COST` for tagged resources
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "Error obtaining instance principals certificate" | IAM policy not propagated | Wait 10 min, verify Dynamic Group matching rule |
+| "Error retrieving Secret" | Missing `read secret-bundles` policy | Add policy for secret compartment |
+| "Error manipulating database" | Wallet expired or wrong password | Run `usage2adw_setup.sh -download_wallet` |
+| "Total 0 cost files found" | Not running from home region | Check `config['region']` matches home region |
+| APEX login fails | USAGE user locked | `ALTER USER USAGE ACCOUNT UNLOCK;` (as ADMIN) |
+| "usage2adw.py is already running" | Previous run still active | `ps -ef \| grep usage2adw.py`, kill stale process |
+| No email received | Postfix misconfigured | Check `/var/log/maillog`, verify SMTP credentials |
+| Dev tenant shows no data | API key or policy issue | Run `usage2adw_check_connectivity.py -t dev` |
 
 ---
 
@@ -246,19 +319,32 @@ After deployment, verify end-to-end:
 
 | File | Purpose |
 |------|---------|
-| `usage2adw.py` | Core extraction engine - OCI cost/usage to ADW |
-| `usage2adw_setup.sh` | Installation automation (-setup_full, -upgrade_app, -create_tables) |
-| `usage2adw_check_connectivity.py` | Pre-flight OCI API connectivity test |
-| `usage2adw_showoci_csv2adw.py` | ShowOCI CSV loader - 88+ infrastructure tables |
-| `usage2adw_demo_apex_app.sql` | APEX visualization application |
-| `usage2adw_download_adb_wallet.py` | ADW wallet generation |
-| `usage2adw_retrieve_secret.py` | KMS Vault secret retrieval |
-| `shell_scripts/run_multi_daily_usage2adw.sh` | Daily orchestration script |
-| `shell_scripts/run_daily_report.sh` | Email report generation |
-| `shell_scripts/run_load_showoci_csv_to_adw.sh` | ShowOCI data load |
-| `terraform/main.tf` | Infrastructure-as-Code deployment |
-| `terraform/modules/iam/main.tf` | Required IAM policy statements |
-| `focus2adw/focus2adw.py` | FOCUS format reports (beta) |
-| `step_by_step_installation.md` | Manual installation guide |
-| `step_by_step_howto.md` | Operations manual (users, upgrades, email, scheduling) |
-| `step_by_step_terraform.md` | Terraform deployment guide |
+| `usage2adw.py` | Core engine - extracts cost CSVs from OCI Object Storage, loads to ADW |
+| `usage2adw_setup.sh` | Setup automation: `-setup_full`, `-upgrade_app`, `-create_tables`, `-download_wallet` |
+| `usage2adw_check_connectivity.py` | Pre-flight test: Identity, Tenancy, Regions, Compartments, Object Storage, Rates API |
+| `usage2adw_showoci_csv2adw.py` | Loads 88+ ShowOCI infrastructure tables including ExaCC-specific tables |
+| `usage2adw_demo_apex_app.sql` | APEX application with 13 pages: cost analysis, trends, rate card, ShowOCI |
+| `usage2adw_download_adb_wallet.py` | Downloads and extracts ADW mTLS wallet |
+| `usage2adw_retrieve_secret.py` | Retrieves password from OCI KMS Vault |
+| `shell_scripts/run_multi_daily_usage2adw.sh` | Multi-tenant daily orchestration (Prod + Dev) |
+| `shell_scripts/run_daily_report.sh` | HTML email report: daily cost, monthly cost, OCPU, storage, by-service |
+| `shell_scripts/run_load_showoci_csv_to_adw.sh` | Loads ShowOCI CSV files into ADW tables |
+| `shell_scripts/run_gather_stats.sh` | Weekly database statistics gathering |
+| `shell_scripts/run_report_compart_service_daily_to_csv.sh` | CSV export: cost by compartment/service/day |
+| `shell_scripts/run_table_size_info.sh` | Reports database object sizes |
+| `shell_scripts/run_sqlplus_usage.sh` | Interactive SQL*Plus connection to ADW as USAGE user |
+| `terraform/` | Full IaC: ADW + VM + Network + IAM + Load Balancer |
+| `config.user` (created at runtime) | Stores: DATABASE_USER, DATABASE_NAME, SECRET_ID, EXTRACT_DATE, TAG_SPECIAL keys |
+
+---
+
+## What You Get When Done
+
+1. **APEX Dashboard** - 13-page web app accessible from on-prem browsers via Load Balancer
+2. **Consolidated Cost View** - Prod + Dev tenancy costs in single dashboard
+3. **ExaCC Infrastructure Inventory** - VM Clusters, databases, PDBs, Exadata rack details
+4. **Daily Email Reports** - Cost trends, OCPU usage, storage usage delivered to your inbox
+5. **Tag-Based Chargeback** - Filter costs by CostCenter, Department, Environment, Project
+6. **CSV Exports** - Daily cost files for finance/ERP integration
+7. **Ansible Automation** - Playbooks for health checks, upgrades, config management, monitoring
+8. **Rate Card Comparison** - Your actual costs vs. public PAYG pricing
