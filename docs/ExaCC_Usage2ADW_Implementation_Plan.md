@@ -4,12 +4,12 @@
 
 **Problem**: Your organization runs Oracle Cloud@Customer (ExaCC) with Exadata infrastructure, ADB, APEX servers, OEM, and Oracle instances across **2 tenancies (Prod & Dev)** in a **private domain data center**. You need cost reporting and usage visibility for budget tracking, department chargebacks, and capacity planning.
 
-**Solution**: Deploy **Usage2ADW** (Oracle open-source, v25.10.01) to extract OCI cost/usage reports into an **Autonomous Data Warehouse (ADW-S)** in OCI Cloud with **APEX dashboards**, automated via **Ansible**, with daily email reports.
+**Solution**: Deploy **Usage2ADW** (Oracle open-source, v25.10.01) to extract OCI cost/usage reports into an **Autonomous Data Warehouse (ADW-S)** in OCI Cloud with **APEX dashboards**, automated via **Azure DevOps self-hosted agent**, with daily email reports.
 
 **Architecture Decisions** (per your input):
 - **VM**: OCI Cloud VM with Instance Principals authentication
 - **Database**: OCI Cloud ADW-S (Shared) with built-in APEX
-- **Automation**: Ansible for provisioning and configuration management
+- **Automation**: Azure DevOps self-hosted agent on OCI VM for CI/CD pipelines (health checks, upgrades, config management, monitoring)
 - **Tenancies**: 2 (Prod + Dev) loaded into single ADW for consolidated reporting
 - **On-Prem Servers**: RHEL 9.0+ and Windows (for accessing APEX dashboards)
 
@@ -25,10 +25,10 @@
 |                                                                   |
 |  +-------------------------+  +-------------------------------+   |
 |  | ExaCC Infrastructure    |  | RHEL 9 / Windows Servers      |   |
-|  | - Exadata Racks         |  | - Ansible Control Node        |   |
-|  | - VM Clusters           |  | - Browser access to APEX      |   |
-|  | - ADB-D Instances       |  | - OCI CLI configured          |   |
-|  | - Oracle Databases      |  +-------------------------------+   |
+|  | - Exadata Racks         |  | - Browser access to APEX      |   |
+|  | - VM Clusters           |  | - OCI CLI configured          |   |
+|  | - ADB-D Instances       |  +-------------------------------+   |
+|  | - Oracle Databases      |                                      |
 |  +-------------------------+                                      |
 |  +-------------------------+                                      |
 |  | OEM Server              |  (Complementary monitoring)          |
@@ -45,8 +45,8 @@
 |  +-------------------------+  | - usage2adw.py                 |  |
 |                               | - Instance Principals           |  |
 |  +-------------------------+  | - Postfix (email)              |  |
-|  | Object Storage          |  +--------------|----------------+   |
-|  | "bling" bucket (Dev)    |->|              |                    |
+|  | Object Storage          |  | - Azure DevOps Self-Hosted Agt |  |
+|  | "bling" bucket (Dev)    |->+--------------|----------------+   |
 |  +-------------------------+  |              v                    |
 |                               | +-----------------------------+  |
 |  +-------------------------+  | | ADW-S (2 ECPU, 1TB, 23ai)  |  |
@@ -83,7 +83,7 @@
 | P0-006 | Choose OCI Compartment for Usage2ADW | OCI Console > Identity > Compartments > Create Compartment (e.g., `Usage2ADW`) | P0-001 | Compartment OCID noted |
 | P0-007 | Choose VCN and Subnet for VM | OCI Console > Networking > VCNs > Select existing VCN with NAT Gateway + Service Gateway | P0-006 | VCN OCID + Subnet OCID noted |
 | P0-008 | Choose Subnet for Load Balancer | Select a public subnet in the same VCN (for APEX access from on-prem) | P0-007 | LB Subnet OCID noted |
-| P0-009 | Generate SSH key pair | `ssh-keygen -t rsa -b 4096 -f ~/.ssh/usage2adw_key` (on Ansible control node) | - | Public key file ready |
+| P0-009 | Generate SSH key pair | `ssh-keygen -t rsa -b 4096 -f ~/.ssh/usage2adw_key` (on admin workstation) | - | Public key file ready |
 | P0-010 | Define tag strategy for cost allocation | Decide 4 tag keys: TAG_SPECIAL=`CostCenter`, TAG_SPECIAL2=`Department`, TAG_SPECIAL3=`Environment`, TAG_SPECIAL4=`Project` | - | 4 tag key names documented |
 | P0-011 | Create OCI Tag Namespace | OCI Console > Governance > Tag Namespaces > Create (e.g., `CostTracking`) | P0-010 | Namespace created |
 | P0-012 | Create OCI Tag Keys | Create keys: `CostCenter`, `Department`, `Environment`, `Project` under namespace | P0-011 | 4 tag keys created |
@@ -209,22 +209,163 @@
 
 ---
 
-### PHASE 6: ANSIBLE AUTOMATION (Week 5-6)
+### PHASE 6: AZURE DEVOPS SELF-HOSTED AGENT AUTOMATION (Week 5-6)
 
 | ID | Task | Exact Action / Command | Depends On | Verification |
 |----|------|----------------------|------------|--------------|
-| P6-001 | Install Ansible on RHEL 9 control node | On-prem RHEL 9: `sudo dnf install -y ansible-core` | - | `ansible --version` shows 2.14+ |
-| P6-002 | Install OCI Ansible collection | `ansible-galaxy collection install oracle.oci` | P6-001 | Collection installed |
-| P6-003 | Configure OCI SDK on control node | Install OCI CLI: `bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"` and configure `~/.oci/config` | P6-001 | `oci iam tenancy get --tenancy-id <OCID>` works |
-| P6-004 | Create Ansible inventory file | Create `inventory/hosts.yml` with Usage2ADW VM IP under `[usage2adw]` group, SSH key path | P1-014 | Inventory file ready |
-| P6-005 | Create Ansible playbook - VM health check | Playbook `playbooks/healthcheck.yml`: Check python3, OCI SDK, Instant Client, wallet, crontab, disk space | P6-004 | Playbook runs successfully |
-| P6-006 | Create Ansible playbook - config management | Playbook `playbooks/configure.yml`: Template `config.user`, update `run_multi_daily_usage2adw.sh` with tenant list, update `run_daily_report.sh` with email settings | P6-004 | Config files managed by Ansible |
-| P6-007 | Create Ansible playbook - upgrade | Playbook `playbooks/upgrade.yml`: Run `usage2adw_setup.sh -upgrade_app` when new version released | P6-004 | Upgrade automated |
-| P6-008 | Create Ansible playbook - crontab | Playbook `playbooks/crontab.yml`: Use `ansible.builtin.cron` module to manage all 5 crontab entries | P6-004 | Crontab managed by Ansible |
-| P6-009 | Create Ansible playbook - monitoring | Playbook `playbooks/monitor.yml`: Check log files for errors, verify last load timestamp, check disk space, alert on failures | P6-004 | Monitoring automated |
-| P6-010 | Create Ansible playbook - wallet refresh | Playbook `playbooks/refresh_wallet.yml`: Run `usage2adw_setup.sh -download_wallet` | P6-004 | Wallet refresh automated |
-| P6-011 | Test all playbooks | Run each playbook against the Usage2ADW VM | P6-005 to P6-010 | All playbooks execute successfully |
-| P6-012 | Schedule Ansible monitoring via cron (control node) | Add to Ansible control node crontab: Run `monitor.yml` every 6 hours | P6-011 | Automated health checks running |
+| P6-001 | Create Azure DevOps project | Azure DevOps > New Project > Name: `Usage2ADW-OCI` > Visibility: Private | - | Project created |
+| P6-002 | Create Agent Pool | Azure DevOps > Project Settings > Agent Pools > Add Pool > Self-hosted > Name: `Usage2ADW-Pool` > Grant access to all pipelines | P6-001 | Pool created |
+| P6-003 | Generate Personal Access Token (PAT) | Azure DevOps > User Settings > Personal Access Tokens > New Token > Scopes: Agent Pools (Read & Manage), Build (Read & Execute) > Expiration: 1 year | P6-001 | PAT saved securely |
+| P6-004 | Download agent on Usage2ADW VM | SSH to VM: `mkdir -p /home/opc/azagent && cd /home/opc/azagent && curl -fkSL -o vsts-agent-linux-x64.tar.gz https://vstsagentpackage.azureedge.net/agent/3.248.0/vsts-agent-linux-x64-3.248.0.tar.gz && tar xzf vsts-agent-linux-x64.tar.gz` | P1-016, P6-003 | Agent files extracted |
+| P6-005 | Configure agent | `cd /home/opc/azagent && ./config.sh --unattended --url https://dev.azure.com/<YOUR_ORG> --auth pat --token <PAT> --pool Usage2ADW-Pool --agent Usage2ADW-VM --acceptTeeEula --replace` | P6-004 | Agent configured, `.agent` and `.credentials` files created |
+| P6-006 | Install agent as systemd service | `cd /home/opc/azagent && sudo ./svc.sh install opc && sudo ./svc.sh start` | P6-005 | `sudo ./svc.sh status` shows running |
+| P6-007 | Verify agent online in Azure DevOps | Azure DevOps > Agent Pools > Usage2ADW-Pool > Agents tab | P6-006 | Agent shows "Online" with green indicator |
+| P6-008 | Create Git repo for pipelines | Azure DevOps > Repos > Initialize with README. Push pipeline YAML files (see below) | P6-001 | Repo with `pipelines/` directory |
+| P6-009 | Create pipeline - Health Check | Create `pipelines/healthcheck.yml` (see YAML below). Azure DevOps > Pipelines > New Pipeline > Azure Repos Git > select repo > Existing YAML > path: `pipelines/healthcheck.yml` | P6-008 | Pipeline created, manual run succeeds |
+| P6-010 | Create pipeline - Config Management | Create `pipelines/configure.yml`: Pipeline with variables for DATABASE_NAME, SECRET_ID, TAG keys. Steps: template `config.user`, update `run_multi_daily_usage2adw.sh` tenant list, update `run_daily_report.sh` email settings | P6-008 | Pipeline manages config files |
+| P6-011 | Create pipeline - Upgrade App | Create `pipelines/upgrade.yml`: Step runs `bash /home/opc/usage_reports_to_adw/usage2adw_setup.sh -upgrade_app` with timeout 30min | P6-008 | Pipeline upgrades app on demand |
+| P6-012 | Create pipeline - Wallet Refresh | Create `pipelines/refresh-wallet.yml`: Step runs `bash /home/opc/usage_reports_to_adw/usage2adw_setup.sh -download_wallet` | P6-008 | Pipeline refreshes ADW wallet |
+| P6-013 | Create pipeline - Monitoring | Create `pipelines/monitor.yml`: Steps check log files for errors, verify last load timestamp < 24h, check disk space > 20% free, publish test results for visibility | P6-008 | Pipeline detects issues and reports status |
+| P6-014 | Schedule monitoring pipeline | Edit `pipelines/monitor.yml` > Add `schedules:` trigger with `cron: '0 */6 * * *'` (every 6 hours) | P6-013 | Scheduled runs appear in pipeline history |
+| P6-015 | Schedule wallet refresh pipeline | Edit `pipelines/refresh-wallet.yml` > Add `schedules:` trigger with `cron: '0 0 1 */6 *'` (1st of every 6th month) | P6-012 | Scheduled every 6 months |
+| P6-016 | Create Variable Group for secrets | Azure DevOps > Pipelines > Library > Variable Groups > New: `Usage2ADW-Config`. Add: `DATABASE_NAME`, `DATABASE_SECRET_ID`, `MAIL_FROM_EMAIL`, `MAIL_TO`. Link to Azure Key Vault if available | P6-001 | Variable group created, linked to pipelines |
+| P6-017 | Test all pipelines | Run each pipeline manually from Azure DevOps | P6-009 to P6-015 | All pipelines execute successfully on self-hosted agent |
+| P6-018 | Set up pipeline notifications | Azure DevOps > Project Settings > Notifications > New Subscription > Pipeline run failed > Send to team email | P6-017 | Team notified on pipeline failures |
+
+#### Pipeline YAML Reference: Health Check (`pipelines/healthcheck.yml`)
+
+```yaml
+trigger: none
+schedules:
+  - cron: '0 */6 * * *'
+    displayName: 'Every 6 hours'
+    branches:
+      include: [main]
+    always: true
+
+pool: Usage2ADW-Pool
+
+steps:
+  - script: |
+      echo "=== Python & Dependencies ==="
+      python3 -c "import oci; import oracledb; import requests; print('OK')"
+
+      echo "=== Oracle Instant Client ==="
+      /usr/lib/oracle/current/client64/bin/sqlplus -V
+
+      echo "=== ADW Wallet ==="
+      ls -la /home/opc/ADWCUSG/cwallet.sso
+
+      echo "=== Crontab ==="
+      crontab -l | grep -c usage_reports_to_adw
+
+      echo "=== Disk Space ==="
+      DISK_PCT=$(df -h / | awk 'NR==2 {gsub(/%/,""); print $5}')
+      echo "Disk usage: ${DISK_PCT}%"
+      if [ "$DISK_PCT" -gt 80 ]; then
+        echo "##vso[task.logissue type=warning]Disk usage above 80%"
+      fi
+
+      echo "=== Last Cost Load ==="
+      LAST_LOG=$(ls -t /home/opc/usage_reports_to_adw/log/run_multi_daily_usage2adw_crontab_run.txt 2>/dev/null)
+      if [ -n "$LAST_LOG" ]; then
+        LAST_MOD=$(stat -c %Y "$LAST_LOG")
+        NOW=$(date +%s)
+        HOURS_AGO=$(( (NOW - LAST_MOD) / 3600 ))
+        echo "Last load: ${HOURS_AGO} hours ago"
+        if [ "$HOURS_AGO" -gt 24 ]; then
+          echo "##vso[task.logissue type=error]Cost load is more than 24 hours behind"
+          exit 1
+        fi
+      fi
+    displayName: 'Usage2ADW Health Check'
+```
+
+#### Pipeline YAML Reference: Monitoring (`pipelines/monitor.yml`)
+
+```yaml
+trigger: none
+schedules:
+  - cron: '0 */6 * * *'
+    displayName: 'Every 6 hours'
+    branches:
+      include: [main]
+    always: true
+
+pool: Usage2ADW-Pool
+
+steps:
+  - script: |
+      echo "=== Checking cost load logs for errors ==="
+      LOG_DIR="/home/opc/usage_reports_to_adw/log"
+      REPORT_DIR="/home/opc/usage_reports_to_adw/report"
+      ERRORS=0
+
+      for LOG in "$LOG_DIR"/*.txt "$REPORT_DIR"/local/*.txt; do
+        if [ -f "$LOG" ]; then
+          if grep -qi "error\|exception\|traceback" "$LOG" 2>/dev/null; then
+            echo "##vso[task.logissue type=warning]Errors found in: $LOG"
+            grep -i "error\|exception" "$LOG" | tail -5
+            ERRORS=$((ERRORS + 1))
+          fi
+        fi
+      done
+
+      echo "=== Checking ShowOCI logs ==="
+      SHOWOCI_LOG="/home/opc/showoci/run_daily_report_crontab_run.txt"
+      if [ -f "$SHOWOCI_LOG" ]; then
+        if grep -qi "error\|exception" "$SHOWOCI_LOG"; then
+          echo "##vso[task.logissue type=warning]Errors in ShowOCI log"
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+
+      if [ "$ERRORS" -gt 0 ]; then
+        echo "##vso[task.logissue type=error]Found $ERRORS log files with errors"
+        exit 1
+      fi
+      echo "All logs clean."
+    displayName: 'Check Logs for Errors'
+
+  - script: |
+      echo "=== Disk Space Check ==="
+      df -h / /home/opc
+      DISK_PCT=$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')
+      if [ "$DISK_PCT" -gt 90 ]; then
+        echo "##vso[task.logissue type=error]CRITICAL: Disk usage at ${DISK_PCT}%"
+        exit 1
+      elif [ "$DISK_PCT" -gt 80 ]; then
+        echo "##vso[task.logissue type=warning]Disk usage at ${DISK_PCT}%"
+      fi
+    displayName: 'Check Disk Space'
+
+  - script: |
+      echo "=== ADW Connectivity Check ==="
+      cd /home/opc/usage_reports_to_adw
+      python3 usage2adw_check_connectivity.py 2>&1 | tail -20
+    displayName: 'Verify ADW Connectivity'
+```
+
+#### Pipeline YAML Reference: Upgrade (`pipelines/upgrade.yml`)
+
+```yaml
+trigger: none
+pool: Usage2ADW-Pool
+
+steps:
+  - script: |
+      cd /home/opc/usage_reports_to_adw
+      echo "=== Current version ==="
+      grep -i "version" usage2adw.py | head -3
+
+      echo "=== Running upgrade ==="
+      bash usage2adw_setup.sh -upgrade_app
+
+      echo "=== New version ==="
+      grep -i "version" usage2adw.py | head -3
+    displayName: 'Upgrade Usage2ADW Application'
+    timeoutInMinutes: 30
+```
 
 ---
 
@@ -346,5 +487,5 @@
 4. **Daily Email Reports** - Cost trends, OCPU usage, storage usage delivered to your inbox
 5. **Tag-Based Chargeback** - Filter costs by CostCenter, Department, Environment, Project
 6. **CSV Exports** - Daily cost files for finance/ERP integration
-7. **Ansible Automation** - Playbooks for health checks, upgrades, config management, monitoring
+7. **Azure DevOps Pipelines** - Self-hosted agent with pipelines for health checks, upgrades, config management, monitoring, and scheduled wallet refresh
 8. **Rate Card Comparison** - Your actual costs vs. public PAYG pricing
